@@ -54,7 +54,6 @@ export default function App() {
 
   const [view, setView] = useState<'form' | 'dashboard'>('form');
   const [colaborador, setColaborador] = useState('');
-  const [desligamento, setDesligamento] = useState('');
   const [email, setEmail] = useState('');
   const [equipamentos, setEquipamentos] = useState<{id: string, quantity: number}[]>([]);
   const [customEquipName, setCustomEquipName] = useState('');
@@ -204,7 +203,6 @@ export default function App() {
 
       const basePayload: Record<string, any> = {
         colaborador: colaborador,
-        desligamento: desligamento,
         equipamentoQuantidade: equipList,
         equipDevolvido: 'Devolvido',
         controleMaju: 'Entregue'
@@ -236,7 +234,6 @@ export default function App() {
         setMessage({ type: 'success', text: 'Registro realizado com sucesso na planilha!' });
         // Limpar campos principais após sucesso
         setColaborador('');
-        setDesligamento('');
         setEmail('');
         setEquipamentos([]);
         setCustomEquipments([]);
@@ -610,21 +607,6 @@ export default function App() {
                   }}
                   className="bg-[#0f172a]/50 border-slate-700 focus:border-cyan-500/50 focus:ring-cyan-500/20 text-white h-12"
                 />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="desligamento" className="text-sm font-semibold text-slate-300">
-                  Data de Desligamento <span className="text-slate-500 font-normal">(Opcional)</span>
-                </Label>
-                <Input 
-                  id="desligamento"
-                  type="text"
-                  placeholder="Ex: 15/06/2026"
-                  value={desligamento}
-                  onChange={(e) => setDesligamento(e.target.value)}
-                  className="bg-[#0f172a]/50 border-slate-700 focus:border-cyan-500/50 focus:ring-cyan-500/20 text-white h-12"
-                />
-                <p className="text-[10px] text-slate-500 mt-1">Ajuda a organizar na aba do mês correto. Se vazio, procura por registros existentes ou usa o mês atual.</p>
               </div>
             </div>
 

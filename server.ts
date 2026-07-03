@@ -14,7 +14,6 @@ const __dirname = path.dirname(__filename);
 // Definição estrita do formato esperado para registrar desligamentos
 const registerSchema = z.object({
   colaborador: z.string().min(1, "O nome do colaborador é obrigatório").max(200, "Nome muito longo"),
-  desligamento: z.string().max(100).optional(),
   equipamentoQuantidade: z.string().max(1000).optional(),
   equipDevolvido: z.string().max(100).optional(),
   controleMaju: z.string().max(100).optional()
