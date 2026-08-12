@@ -9,24 +9,18 @@ import {
   LayoutDashboard, 
   Plus, 
   Minus,
-  Trash2, 
   Monitor, 
   Laptop, 
   MousePointer2, 
   Keyboard, 
-  Smartphone, 
   Power,
   X,
-  Upload,
-  FileText,
   CheckCircle2
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { 
   LogIn, 
   LogOut, 
   ShieldAlert, 
-  User as UserIcon,
   Loader2,
   Eye,
   EyeOff
@@ -36,14 +30,16 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
 import Dashboard from '@/src/components/Dashboard';
+import Motoboy from '@/src/components/Motoboy';
 
 interface CustomEquipment {
   id: string;
   name: string;
   quantity: number;
 }
+
+const SESSION_TIMEOUT_MS = 15 * 60 * 1000;
 
 export default function App() {
   const [user, setUser] = useState<{name: string, email: string, picture: string} | null>(null);
@@ -52,9 +48,9 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  const [view, setView] = useState<'form' | 'dashboard'>('form');
+  const [view, setView] = useState<'form' | 'dashboard' | 'motoboy'>('form');
+  const [motoboyPendingCount, setMotoboyPendingCount] = useState(0);
   const [colaborador, setColaborador] = useState('');
-  const [email, setEmail] = useState('');
   const [equipamentos, setEquipamentos] = useState<{id: string, quantity: number}[]>([]);
   const [customEquipName, setCustomEquipName] = useState('');
   const [customEquipQty, setCustomEquipQty] = useState(1);
@@ -63,9 +59,6 @@ export default function App() {
   const [customEquipments, setCustomEquipments] = useState<CustomEquipment[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
-  const [isImporting, setIsImporting] = useState(false);
-  const [showImport, setShowImport] = useState(false);
-  const [dragActive, setDragActive] = useState(false);
 
   // Check auth status on mount
   useEffect(() => {
@@ -117,6 +110,7 @@ export default function App() {
     localStorage.removeItem('dafiti_user');
     setUser(null);
     setView('form');
+    setMotoboyPendingCount(0);
   };
 
   // Limite de sessão de 15 minutos de inatividade
@@ -132,7 +126,7 @@ export default function App() {
 
     const resetTimer = () => {
       clearTimeout(timeout);
-      timeout = setTimeout(logoutDueToInactivity, 15 * 60 * 1000); // 15 minutos
+      timeout = setTimeout(logoutDueToInactivity, SESSION_TIMEOUT_MS);
     };
 
     // Inicia o timer logo que entrar
@@ -147,16 +141,6 @@ export default function App() {
       events.forEach(event => window.removeEventListener(event, resetTimer));
     };
   }, [user]); // recria/re-inicia quando o usuário loga
-
-  useEffect(() => {
-    if (colaborador) {
-      const nameParts = colaborador.toLowerCase().split(' ');
-      if (nameParts.length >= 2) {
-        const generatedEmail = `${nameParts[0]}.${nameParts[nameParts.length - 1]}@dafiti.com.br`;
-        setEmail(generatedEmail);
-      }
-    }
-  }, [colaborador]);
 
   const toggleEquipamento = (id: string) => {
     setEquipamentos(prev => {
@@ -215,7 +199,6 @@ export default function App() {
           'x-user-email': user?.email || ''
         },
         // Remove completamente a chave "email" da requisição.
-        // A chave só vai constar no JSON se for o Admin fazendo batch-import ou preenchendo um email válido.
         // A planilha nunca substituirá nada porque o "email" sequer será transmitido.
         body: JSON.stringify(basePayload),
       });
@@ -234,7 +217,6 @@ export default function App() {
         setMessage({ type: 'success', text: 'Registro realizado com sucesso na planilha!' });
         // Limpar campos principais após sucesso
         setColaborador('');
-        setEmail('');
         setEquipamentos([]);
         setCustomEquipments([]);
         
@@ -249,69 +231,6 @@ export default function App() {
       setMessage({ type: 'error', text: error.message });
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleFileUpload = (file: File) => {
-    setIsImporting(true);
-    setMessage(null);
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = e.target?.result;
-        const workbook = XLSX.read(data, { type: 'binary' });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const json = XLSX.utils.sheet_to_json(worksheet) as any[];
-
-        if (json.length > 0) {
-          const firstRow = json[0];
-          
-          // Mapeamento flexível apenas para Nome e Email
-          const findVal = (keys: string[]) => {
-            const foundKey = Object.keys(firstRow).find(k => 
-              keys.some(key => k.toLowerCase().trim().includes(key))
-            );
-            return foundKey ? firstRow[foundKey] : null;
-          };
-
-          const name = findVal(["colaborador", "nome", "funcionário"]);
-          const mail = findVal(["email", "e-mail"]);
-
-          if (name) setColaborador(String(name));
-          if (mail) setEmail(String(mail));
-
-          setMessage({ type: 'success', text: 'Dados importados do arquivo com sucesso!' });
-          setShowImport(false);
-        } else {
-          throw new Error("O arquivo parece estar vazio.");
-        }
-      } catch (error: any) {
-        setMessage({ type: 'error', text: 'Erro ao ler o arquivo: ' + error.message });
-      } finally {
-        setIsImporting(false);
-      }
-    };
-    reader.readAsBinaryString(file);
-  };
-
-  const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileUpload(e.dataTransfer.files[0]);
     }
   };
 
@@ -437,7 +356,20 @@ export default function App() {
   return (
     <>
     <AnimatePresence mode="wait">
-      {view === 'dashboard' ? (
+      {view === 'motoboy' ? (
+        <motion.div
+          key="motoboy"
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -20 }}
+        >
+          <Motoboy
+            userEmail={user?.email || ''}
+            onPendingCountChange={setMotoboyPendingCount}
+            onBack={() => setView('form')}
+          />
+        </motion.div>
+      ) : view === 'dashboard' ? (
         <motion.div
           key="dashboard"
           initial={{ opacity: 0, x: 20 }}
@@ -493,14 +425,28 @@ export default function App() {
 
             {/* Header */}
             <div className="flex flex-col items-center mb-12 text-center">
-              <Button 
-                variant="outline" 
-                onClick={() => setView('dashboard')}
-                className="mb-8 bg-cyan-500/10 border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 hover:text-cyan-300 transition-all gap-2 rounded-lg px-6"
-              >
-                <LayoutDashboard className="w-4 h-4" />
-                Dashboard
-              </Button>
+              <div className="mb-8 flex flex-wrap justify-center gap-3">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setView('dashboard')}
+                  className="bg-cyan-500/10 border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 hover:text-cyan-300 transition-all gap-2 rounded-lg px-6"
+                >
+                  <LayoutDashboard className="w-4 h-4" />
+                  Dashboard
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setView('motoboy')}
+                  className="relative bg-orange-500/10 border-orange-500/20 text-orange-400 hover:bg-orange-500/20 hover:text-orange-300 transition-all gap-2 rounded-lg px-6"
+                >
+                  Motoboy
+                  {motoboyPendingCount > 0 && (
+                    <span className="absolute -right-2 -top-2 rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-black text-white">
+                      {motoboyPendingCount}
+                    </span>
+                  )}
+                </Button>
+              </div>
               
               <h1 className="text-4xl md:text-5xl font-black tracking-tighter text-white mb-2 uppercase">
                 REGISTRO DE <br className="md:hidden" />
@@ -518,74 +464,11 @@ export default function App() {
         {/* Form Card */}
         <Card className="bg-[#1e293b]/50 border-slate-800 backdrop-blur-xl shadow-2xl overflow-hidden">
           <CardHeader className="pb-4 relative">
-            <div className="flex justify-between items-start">
-              <div>
-                <CardTitle className="text-2xl font-bold text-white">Novo Registro</CardTitle>
-                <CardDescription className="text-slate-400">Preencha os dados do colaborador desligado</CardDescription>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowImport(!showImport)}
-                className="bg-cyan-500/10 border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/20 text-xs gap-2"
-              >
-                <Upload className={`w-3 h-3 transition-transform ${showImport ? 'rotate-45' : ''}`} />
-                Importar Arquivo
-              </Button>
+            <div>
+              <CardTitle className="text-2xl font-bold text-white">Novo Registro</CardTitle>
+              <CardDescription className="text-slate-400">Preencha os dados do colaborador desligado</CardDescription>
             </div>
             <div className="h-0.5 w-16 bg-gradient-to-r from-cyan-500 to-orange-500 mt-2 rounded-full" />
-            
-            <AnimatePresence>
-              {showImport && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="mt-4 overflow-hidden"
-                >
-                  <div 
-                    className={`relative p-8 border-2 border-dashed rounded-2xl transition-all text-center ${
-                      dragActive 
-                        ? 'border-cyan-500 bg-cyan-500/10 scale-[1.02]' 
-                        : 'border-slate-700 bg-slate-800/30 hover:border-slate-600'
-                    }`}
-                    onDragEnter={handleDrag}
-                    onDragLeave={handleDrag}
-                    onDragOver={handleDrag}
-                    onDrop={handleDrop}
-                  >
-                    <input 
-                      type="file" 
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" 
-                      accept=".xlsx, .xls, .csv"
-                      onChange={(e) => e.target.files && handleFileUpload(e.target.files[0])}
-                    />
-                    
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="w-12 h-12 bg-cyan-500/10 rounded-full flex items-center justify-center text-cyan-400">
-                        {isImporting ? (
-                          <div className="w-6 h-6 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          <FileText className="w-6 h-6" />
-                        )}
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-white">
-                          {isImporting ? 'Processando arquivo...' : 'Arraste o arquivo aqui'}
-                        </p>
-                        <p className="text-xs text-slate-500 mt-1">Excel (.xlsx) ou CSV</p>
-                      </div>
-                      <Button variant="link" className="text-cyan-400 text-xs h-auto p-0">
-                        ou clique para selecionar
-                      </Button>
-                    </div>
-                  </div>
-                  <p className="text-[10px] text-slate-500 mt-2 text-center">
-                    O sistema lerá a primeira linha de dados e preencherá os campos automaticamente.
-                  </p>
-                </motion.div>
-              )}
-            </AnimatePresence>
           </CardHeader>
 
           <CardContent className="space-y-8">

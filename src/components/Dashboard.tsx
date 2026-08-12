@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell, Legend
@@ -35,8 +35,11 @@ export default function Dashboard({ onBack, userEmail }: DashboardProps) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const isFetchingRef = useRef(false);
 
   const fetchData = async (isManual = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     if (isManual) setData(null);
     setIsLoading(true);
     try {
@@ -66,6 +69,7 @@ export default function Dashboard({ onBack, userEmail }: DashboardProps) {
       setError(err.message);
       setData(null);
     } finally {
+      isFetchingRef.current = false;
       setIsLoading(false);
     }
   };

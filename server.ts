@@ -14,10 +14,38 @@ const __dirname = path.dirname(__filename);
 // Definição estrita do formato esperado para registrar desligamentos
 const registerSchema = z.object({
   colaborador: z.string().min(1, "O nome do colaborador é obrigatório").max(200, "Nome muito longo"),
+  desligamento: z.string().max(100).optional(),
   equipamentoQuantidade: z.string().max(1000).optional(),
   equipDevolvido: z.string().max(100).optional(),
   controleMaju: z.string().max(100).optional()
 }).strip(); // O '.strip()' remove automaticamente quaisquer campos maliciosos/não-mapeados que venham na requisição
+
+const motoboyCreateSchema = z.object({
+  nomeSolicitante: z.string().min(1, "O nome do solicitante é obrigatório").max(200, "Nome do solicitante muito longo"),
+  dataSolicitacao: z.string().min(1, "A data da solicitação é obrigatória").max(30, "Data da solicitação inválida"),
+  equipamento: z.string().min(1, "O equipamento é obrigatório").max(200, "Equipamento muito longo"),
+  funcionario: z.string().min(1, "O funcionário é obrigatório").max(200, "Funcionário muito longo"),
+  email: z.string().email("E-mail inválido").max(200, "E-mail muito longo"),
+  centroCusto: z.string().max(100, "Centro de custo muito longo").optional().default(""),
+  telefone: z.string().min(1, "O telefone é obrigatório").max(50, "Telefone muito longo"),
+  endereco: z.string().min(1, "O endereço é obrigatório").max(500, "Endereço muito longo"),
+  tipoServico: z.enum(["ENTREGA", "Retirada"], { message: "Tipo de serviço inválido" }),
+  possuiRetorno: z.enum(["Sim", "Não"], { message: "Informe se possui retorno" }),
+  prioridade: z.enum(["Baixa", "Normal", "Alta", "Urgente"], { message: "Prioridade inválida" })
+}).strip();
+
+const motoboyUpdateSchema = z.object({
+  maquinaRetirada: z.string().max(100).optional(),
+  enviado: z.string().max(100).optional(),
+  recebido: z.string().max(100).optional(),
+  dataEnvioRecebimento: z.string().max(120, "Datas de envio/recebimento muito longas").optional(),
+  codigoRastreio: z.string().max(120).optional(),
+  observacoes: z.string().max(1000).optional()
+}).strip();
+
+const motoboyDeleteSchema = z.object({
+  justificativa: z.string().trim().min(1, "Justificativa da exclusão é obrigatória").max(1000, "Justificativa da exclusão muito longa")
+}).strip();
 
 // --- ESTÁGIO 2: Resiliência e Performance ---
 
@@ -27,6 +55,28 @@ const dashboardCache = {
   lastFetch: 0
 };
 const CACHE_TTL = 2 * 60 * 1000; // 2 minutos em milissegundos
+const SESSION_MAX_AGE_MS = 15 * 60 * 1000;
+const AUTH_DEBUG = process.env.AUTH_DEBUG === "true";
+
+type MotoboyRole = "suporte" | "recepcao" | "none";
+
+function getMotoboyRole(userEmail: string): MotoboyRole {
+  const normalizedEmail = userEmail.toLowerCase();
+  if (normalizedEmail === "suporte.dafiti@dafiti.com.br") return "suporte";
+  if (normalizedEmail === "recepcao@dafiti.com.br") return "recepcao";
+  if (normalizedEmail === "maria.sousa@dafiti.com.br") return "recepcao";
+  return "none";
+}
+
+function generateMotoboyId(date = new Date()) {
+  const timestamp = date.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+  const random = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `MOTO-${timestamp}-${random}`;
+}
+
+function filterValidMotoboyRequests(requests: any[]) {
+  return requests.filter((request) => typeof request?.id === "string" && request.id.trim());
+}
 
 // 2. Fetch Helper com Auto-Retry (Exponential Backoff)
 async function fetchWithRetry(url: string, options: RequestInit = {}, maxRetries = 3) {
@@ -53,9 +103,26 @@ async function fetchWithRetry(url: string, options: RequestInit = {}, maxRetries
   throw new Error("Falha Crítica no Fetch");
 }
 
+function createAppsScriptPostOptions(payload: unknown): RequestInit {
+  const body = new URLSearchParams();
+  body.set("payload", JSON.stringify(payload));
+
+  return {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+    },
+    body,
+  };
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
+  const sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret) {
+    throw new Error("SESSION_SECRET environment variable is required");
+  }
 
   // Informa ao Express que ele está rodando atrás de um proxy reverso (Cloud Run / Nginx) 
   // Isso resolve os avisos de segurança (X-Forwarded-For) no rateLimiter e padroniza a coleta de IP real.
@@ -64,8 +131,8 @@ async function startServer() {
   app.use(express.json({ limit: "50kb" })); // Trava global de tamanho de requisição para evitar ataques de estouro de payload
   app.use(cookieSession({
     name: 'session',
-    keys: [process.env.SESSION_SECRET || 'dafiti-ti-secret'],
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    keys: [sessionSecret],
+    maxAge: SESSION_MAX_AGE_MS,
     // Temporariamente forçando secure: false para diagnosticar se o problema é o HTTPS no proxy
     secure: false, 
     sameSite: 'lax',
@@ -85,8 +152,9 @@ async function startServer() {
   app.post('/api/auth/login', loginLimiter, (req, res) => {
     const { password } = req.body;
     
-    const tiPassword = process.env.TI_PASSWORD || process.env.SESSION_SECRET || 'dafiti-ti-secret';
-    const receptionPassword = process.env.RECEPTION_PASSWORD || 'D3slig@d0s';
+    const tiPassword = process.env.TI_PASSWORD;
+    const receptionPassword = process.env.RECEPTION_PASSWORD;
+    const mariaPassword = process.env.MARIA_PASSWORD;
 
     // Definição das contas de acesso e suas senhas (agora puxadas do .env)
     const validLogins = [
@@ -99,10 +167,10 @@ async function startServer() {
         user: { name: 'Recepção', email: 'recepcao@dafiti.com.br', picture: '' }
       },
       {
-        password: process.env.MARIA_PASSWORD || 'Dafiti@20304050',
+        password: mariaPassword,
         user: { name: 'Maria Julia Sousa', email: 'maria.sousa@dafiti.com.br', picture: '' }
       }
-    ];
+    ].filter((login) => Boolean(login.password));
 
     const matchedLogin = validLogins.find(login => login.password === password);
 
@@ -123,8 +191,10 @@ async function startServer() {
 
   // Middleware de Autenticação (A Blindagem Anti-Hacker)
   const requireAuth = (req: any, res: any, next: any) => {
-    const proto = req.headers['x-forwarded-proto'];
-    console.log(`[AUTH] Rota: ${req.url} | Protocolo: ${proto || 'local'} | IP: ${req.ip}`);
+    if (AUTH_DEBUG) {
+      const proto = req.headers['x-forwarded-proto'];
+      console.log(`[AUTH] Rota: ${req.url} | Protocolo: ${proto || 'local'} | IP: ${req.ip}`);
+    }
     
     // Log do estado da sessão para depuração em produção
     if (!req.session) {
@@ -137,7 +207,9 @@ async function startServer() {
       return res.status(401).json({ success: false, error: 'Acesso Negado: Sessão Inválida ou Expirada. Faça o login novamente.' });
     }
     
-    console.log(`[AUTH] Acesso autorizado para: ${req.session.user.name}`);
+    if (AUTH_DEBUG) {
+      console.log(`[AUTH] Acesso autorizado para: ${req.session.user.name}`);
+    }
     next();
   };
 
@@ -217,11 +289,7 @@ async function startServer() {
 
       // 2. Fetch com os dados higienizados E proteção de Repetição (Retry)
       const response = await fetchWithRetry(process.env.GOOGLE_SCRIPT_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(data),
+        ...createAppsScriptPostOptions(data),
       });
 
       const text = await response.text();
@@ -279,6 +347,181 @@ async function startServer() {
 
       res.json(result.data);
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/motoboy/requests", requireAuth, async (req, res) => {
+    try {
+      const role = getMotoboyRole((req as any).session.user.email || "");
+      if (role !== "suporte") {
+        return res.status(403).json({ error: "Apenas Suporte TI pode criar solicitações de Motoboy." });
+      }
+
+      if (!process.env.GOOGLE_SCRIPT_URL) {
+        throw new Error("Google Script URL not configured in environment variables.");
+      }
+
+      const data = motoboyCreateSchema.parse(req.body);
+      const payload = {
+        action: "createMotoboyRequest",
+        data: {
+          id: generateMotoboyId(),
+          ...data,
+          status: "Pendente"
+        }
+      };
+
+      const response = await fetchWithRetry(process.env.GOOGLE_SCRIPT_URL, {
+        ...createAppsScriptPostOptions(payload),
+      });
+
+      const text = await response.text();
+      let result;
+      try {
+        result = JSON.parse(text);
+      } catch (e) {
+        console.error("Response is not JSON:", text);
+        throw new Error("Erro ao processar resposta do script.");
+      }
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Erro ao criar solicitação de Motoboy.");
+      }
+
+      res.json({ success: true, request: result.data || payload.data });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.issues[0].message });
+      }
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/motoboy/requests", requireAuth, async (req, res) => {
+    try {
+      const role = getMotoboyRole((req as any).session.user.email || "");
+      if (role === "none") {
+        return res.status(403).json({ error: "Usuário sem acesso à área Motoboy." });
+      }
+
+      if (!process.env.GOOGLE_SCRIPT_URL) {
+        throw new Error("Google Script URL not configured.");
+      }
+
+      const query = { action: "listMotoboyRequests", role };
+      const response = await fetchWithRetry(`${process.env.GOOGLE_SCRIPT_URL}?action=${query.action}&role=${query.role}`);
+      const text = await response.text();
+      let result;
+      try {
+        result = JSON.parse(text);
+      } catch (e) {
+        console.error("Response is not JSON:", text);
+        throw new Error("Erro ao processar resposta do script.");
+      }
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Erro ao listar solicitações de Motoboy.");
+      }
+
+      res.json({ success: true, role, requests: filterValidMotoboyRequests(result.data || []) });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/motoboy/requests/:id", requireAuth, async (req, res) => {
+    try {
+      const role = getMotoboyRole((req as any).session.user.email || "");
+      if (role !== "recepcao") {
+        return res.status(403).json({ error: "Apenas Recepção pode atualizar solicitações de Motoboy." });
+      }
+
+      if (!process.env.GOOGLE_SCRIPT_URL) {
+        throw new Error("Google Script URL not configured in environment variables.");
+      }
+
+      const id = z.string().min(1, "ID da solicitação é obrigatório").parse(req.params.id);
+      const data = motoboyUpdateSchema.parse(req.body);
+
+      const response = await fetchWithRetry(process.env.GOOGLE_SCRIPT_URL, {
+        ...createAppsScriptPostOptions({ action: "updateMotoboyRequest", id, data }),
+      });
+
+      const text = await response.text();
+      let result;
+      try {
+        result = JSON.parse(text);
+      } catch (e) {
+        console.error("Response is not JSON:", text);
+        throw new Error("Erro ao processar resposta do script.");
+      }
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Erro ao atualizar solicitação de Motoboy.");
+      }
+
+      res.json({ success: true, request: result.data });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.issues[0].message });
+      }
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/motoboy/requests/:id", requireAuth, async (req, res) => {
+    try {
+      const user = (req as any).session.user;
+      const role = getMotoboyRole(user.email || "");
+      if (role !== "suporte" && role !== "recepcao") {
+        return res.status(403).json({ error: "Apenas Suporte TI ou Recepção podem excluir solicitações de Motoboy." });
+      }
+
+      if (!process.env.GOOGLE_SCRIPT_URL) {
+        throw new Error("Google Script URL not configured in environment variables.");
+      }
+
+      const id = z.string().min(1, "ID da solicitação é obrigatório").parse(req.params.id);
+      const data = motoboyDeleteSchema.parse(req.body);
+
+      const response = await fetchWithRetry(process.env.GOOGLE_SCRIPT_URL, {
+        ...createAppsScriptPostOptions({
+          action: "deleteMotoboyRequest",
+          id,
+          data: {
+            justificativa: data.justificativa,
+            excluidoPor: `${user.name || "Usuário"} <${user.email || "sem-email"}>`
+          }
+        }),
+      });
+
+      const text = await response.text();
+      let result;
+      try {
+        result = JSON.parse(text);
+      } catch (e) {
+        console.error("Response is not JSON:", text);
+        throw new Error("Erro ao processar resposta do script.");
+      }
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Erro ao excluir solicitação de Motoboy.");
+      }
+
+      if (result.action === "registerDesligamento") {
+        throw new Error("Apps Script publicado não recebeu a ação deleteMotoboyRequest. Atualize Code.gs, crie Nova versão da implantação e reinicie o backend.");
+      }
+
+      if (result.data?.status !== "Excluído") {
+        throw new Error("Apps Script de Motoboy desatualizado. Atualize o Code.gs e reimplante o Web App.");
+      }
+
+      res.json({ success: true, request: result.data });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.issues[0].message });
+      }
       res.status(500).json({ error: error.message });
     }
   });
