@@ -28,6 +28,7 @@ Thumbs.db
 .agents/
 .codex/
 .git.corrupt-*/
+.worktrees/
 docs/superpowers/
 skills-lock.json
 
