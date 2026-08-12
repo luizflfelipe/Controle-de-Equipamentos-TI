@@ -16,7 +16,7 @@ const registerSchema = z.object({
   colaborador: z.string().min(1, "O nome do colaborador é obrigatório").max(200, "Nome muito longo"),
   desligamento: z.string().max(100).optional(),
   equipamentoQuantidade: z.string().max(1000).optional(),
-  equipDevolvido: z.string().max(100).optional(),
+  equipDevolvido: z.enum(["Devolvido", "Desligamento"]).optional(),
   controleMaju: z.string().max(100).optional()
 }).strip(); // O '.strip()' remove automaticamente quaisquer campos maliciosos/não-mapeados que venham na requisição
 

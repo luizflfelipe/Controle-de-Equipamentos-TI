@@ -557,7 +557,7 @@ function doPost(e) {
       throw new Error("Nenhum dado foi recebido no POST.");
     }
 
-    var contents = JSON.parse(e.postData.contents);
+    var contents = parsePostBody_(e);
     if (!contents || typeof contents !== "object" || Array.isArray(contents)) {
       throw new Error("O conteúdo recebido não possui um objeto JSON válido.");
     }
@@ -579,6 +579,36 @@ function doPost(e) {
       error: err.toString()
     })).setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+function parsePostBody_(e) {
+  if (e.parameter && e.parameter.payload) {
+    return JSON.parse(e.parameter.payload);
+  }
+
+  var contents = e.postData.contents;
+  var trimmed = contents.toString().trim();
+
+  if (trimmed.charAt(0) === "{" || trimmed.charAt(0) === "[") {
+    return JSON.parse(trimmed);
+  }
+
+  var params = {};
+  trimmed.split("&").forEach(function (part) {
+    if (!part) return;
+
+    var pair = part.split("=");
+    var key = decodeURIComponent((pair[0] || "").replace(/\+/g, " "));
+    var value = decodeURIComponent((pair.slice(1).join("=") || "").replace(/\+/g, " "));
+
+    if (key) params[key] = value;
+  });
+
+  if (params.payload) {
+    return JSON.parse(params.payload);
+  }
+
+  return params;
 }
 
 function registrarNaPlanilha(contents) {
@@ -623,11 +653,11 @@ function registrarNaPlanilha(contents) {
         existing[idxEmail] = contents.email || existing[idxEmail];
       }
 
-      if (normalizarTexto(novoStatusDev) === "devolvido") {
+      if (normalizarTexto(novoStatusDev) === "devolvido" || normalizarTexto(novoStatusDev) === "desligamento") {
         if (veioDoPortal && isTextoVazio(existing[idxRecebido])) {
           existing[idxRecebido] = nowDateStr();
         }
-        existing[idxEquipDev] = "Devolvido";
+        existing[idxEquipDev] = novoStatusDev;
         existing[idxMaju] = "Entregue";
         existing[idxEquips] = obs;
       }

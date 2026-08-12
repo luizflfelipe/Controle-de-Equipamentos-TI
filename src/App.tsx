@@ -51,6 +51,7 @@ export default function App() {
   const [view, setView] = useState<'form' | 'dashboard' | 'motoboy'>('form');
   const [motoboyPendingCount, setMotoboyPendingCount] = useState(0);
   const [colaborador, setColaborador] = useState('');
+  const [statusRegistro, setStatusRegistro] = useState<'Devolução' | 'Desligamento'>('Devolução');
   const [equipamentos, setEquipamentos] = useState<{id: string, quantity: number}[]>([]);
   const [customEquipName, setCustomEquipName] = useState('');
   const [customEquipQty, setCustomEquipQty] = useState(1);
@@ -184,11 +185,12 @@ export default function App() {
         }),
         ...customEquipments.map(e => `${e.quantity}x ${e.name}`)
       ].join(", ");
+      const equipDevolvido = statusRegistro === 'Devolução' ? 'Devolvido' : 'Desligamento';
 
       const basePayload: Record<string, any> = {
         colaborador: colaborador,
         equipamentoQuantidade: equipList,
-        equipDevolvido: 'Devolvido',
+        equipDevolvido: equipDevolvido,
         controleMaju: 'Entregue'
       };
 
@@ -217,6 +219,7 @@ export default function App() {
         setMessage({ type: 'success', text: 'Registro realizado com sucesso na planilha!' });
         // Limpar campos principais após sucesso
         setColaborador('');
+        setStatusRegistro('Devolução');
         setEquipamentos([]);
         setCustomEquipments([]);
         
@@ -469,6 +472,20 @@ export default function App() {
               <CardDescription className="text-slate-400">Preencha os dados do colaborador desligado</CardDescription>
             </div>
             <div className="h-0.5 w-16 bg-gradient-to-r from-cyan-500 to-orange-500 mt-2 rounded-full" />
+            <div className="mt-4 space-y-2">
+              <Label htmlFor="statusRegistro" className="text-sm font-semibold text-slate-300">
+                Status <span className="text-red-500">*</span>
+              </Label>
+              <select
+                id="statusRegistro"
+                value={statusRegistro}
+                onChange={(e) => setStatusRegistro(e.target.value as 'Devolução' | 'Desligamento')}
+                className="h-12 w-full rounded-md border border-slate-700 bg-[#0f172a]/50 px-3 text-sm text-white shadow-sm transition-colors focus:border-cyan-500/50 focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
+              >
+                <option value="Devolução">Devolução</option>
+                <option value="Desligamento">Desligamento</option>
+              </select>
+            </div>
           </CardHeader>
 
           <CardContent className="space-y-8">
