@@ -561,7 +561,7 @@ function ReceptionUpdatePanel({
             <RequesterInfoPanel selectedRequest={selectedRequest} />
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Field label="Maquina Retirada" value={form.maquinaRetirada || ""} onChange={(value) => setForm((prev) => ({ ...prev, maquinaRetirada: value }))} />
+            <SelectField label="Maquina Retirada" value={form.maquinaRetirada || "Não"} onChange={(value) => setForm((prev) => ({ ...prev, maquinaRetirada: value }))} options={["Não", "Sim"]} />
             <SelectField label="Enviado" value={form.enviado || "Não"} onChange={(value) => setForm((prev) => ({ ...prev, enviado: value }))} options={["Não", "Sim"]} />
             <SelectField label="Recebido" value={form.recebido || "Não"} onChange={(value) => setForm((prev) => ({ ...prev, recebido: value }))} options={["Não", "Sim"]} />
             <Field label="Data do Envio" type="date" value={shippingDates.dataEnvio} onChange={(value) => setShippingDates((prev) => ({ ...prev, dataEnvio: value }))} />

@@ -116,6 +116,14 @@ function createAppsScriptPostOptions(payload: unknown): RequestInit {
   };
 }
 
+function getMotoboyScriptUrl() {
+  const scriptUrl = process.env.MOTOBOY_GOOGLE_SCRIPT_URL || process.env.GOOGLE_SCRIPT_URL;
+  if (!scriptUrl) {
+    throw new Error("MOTOBOY_GOOGLE_SCRIPT_URL or GOOGLE_SCRIPT_URL not configured in environment variables.");
+  }
+  return scriptUrl;
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -358,9 +366,7 @@ async function startServer() {
         return res.status(403).json({ error: "Apenas Suporte TI pode criar solicitações de Motoboy." });
       }
 
-      if (!process.env.GOOGLE_SCRIPT_URL) {
-        throw new Error("Google Script URL not configured in environment variables.");
-      }
+      const scriptUrl = getMotoboyScriptUrl();
 
       const data = motoboyCreateSchema.parse(req.body);
       const payload = {
@@ -372,7 +378,7 @@ async function startServer() {
         }
       };
 
-      const response = await fetchWithRetry(process.env.GOOGLE_SCRIPT_URL, {
+      const response = await fetchWithRetry(scriptUrl, {
         ...createAppsScriptPostOptions(payload),
       });
 
@@ -405,12 +411,10 @@ async function startServer() {
         return res.status(403).json({ error: "Usuário sem acesso à área Motoboy." });
       }
 
-      if (!process.env.GOOGLE_SCRIPT_URL) {
-        throw new Error("Google Script URL not configured.");
-      }
+      const scriptUrl = getMotoboyScriptUrl();
 
       const query = { action: "listMotoboyRequests", role };
-      const response = await fetchWithRetry(`${process.env.GOOGLE_SCRIPT_URL}?action=${query.action}&role=${query.role}`);
+      const response = await fetchWithRetry(`${scriptUrl}?action=${query.action}&role=${query.role}`);
       const text = await response.text();
       let result;
       try {
@@ -437,14 +441,12 @@ async function startServer() {
         return res.status(403).json({ error: "Apenas Recepção pode atualizar solicitações de Motoboy." });
       }
 
-      if (!process.env.GOOGLE_SCRIPT_URL) {
-        throw new Error("Google Script URL not configured in environment variables.");
-      }
+      const scriptUrl = getMotoboyScriptUrl();
 
       const id = z.string().min(1, "ID da solicitação é obrigatório").parse(req.params.id);
       const data = motoboyUpdateSchema.parse(req.body);
 
-      const response = await fetchWithRetry(process.env.GOOGLE_SCRIPT_URL, {
+      const response = await fetchWithRetry(scriptUrl, {
         ...createAppsScriptPostOptions({ action: "updateMotoboyRequest", id, data }),
       });
 
@@ -478,14 +480,12 @@ async function startServer() {
         return res.status(403).json({ error: "Apenas Suporte TI ou Recepção podem excluir solicitações de Motoboy." });
       }
 
-      if (!process.env.GOOGLE_SCRIPT_URL) {
-        throw new Error("Google Script URL not configured in environment variables.");
-      }
+      const scriptUrl = getMotoboyScriptUrl();
 
       const id = z.string().min(1, "ID da solicitação é obrigatório").parse(req.params.id);
       const data = motoboyDeleteSchema.parse(req.body);
 
-      const response = await fetchWithRetry(process.env.GOOGLE_SCRIPT_URL, {
+      const response = await fetchWithRetry(scriptUrl, {
         ...createAppsScriptPostOptions({
           action: "deleteMotoboyRequest",
           id,

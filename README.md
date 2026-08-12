@@ -30,6 +30,12 @@ Dentre as principais motivações que levaram ao desenvolvimento desta arquitetu
 - **Líder e Arquiteto do Projeto:** Luiz Felipe Fernandes Sergio
 - **Empresa:** Dafiti Group
 
+## 🤖 Instruções para Codex
+
+- O Codex deve usar sempre a skill `$caveman` durante esta conversa e manter respostas objetivas, curtas e técnicas.
+- O Codex deve usar sempre `@Superpowers` antes de executar tarefas, respeitando as skills aplicáveis ao tipo de trabalho solicitado.
+- O Codex não deve criar commits sem autorização explícita do responsável pelo projeto.
+
 ## 🛠️ Tecnologias e Arquitetura
 
 Este sistema foi construído sobre uma base Full-Stack performática, contando com restrições Severas de Segurança como Rate Limiting (Anti-Brute Force), Bloqueios Middleware, Exponential Backoffs e Validações Zod para assegurar que nenhum tipo de injeção externa macule o banco do Google.

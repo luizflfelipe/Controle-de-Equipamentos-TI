@@ -277,51 +277,346 @@ function registerDesligamento_(data) {
 }
 
 function getDashboardData_() {
-  const sheet = getSheet_(DESLIGAMENTOS_SPREADSHEET_ID, DESLIGAMENTOS_SHEET_NAME, DESLIGAMENTOS_HEADERS);
-  const headers = ensureHeaders_(sheet, DESLIGAMENTOS_HEADERS);
-  const values = sheet.getDataRange().getValues();
-  const rows = values.length > 1 ? values.slice(1) : [];
-  const colaboradorIndex = findHeaderIndex_(headers, ["Colaborador"]);
-  const dateIndex = findHeaderIndex_(headers, ["Data Registro", "Data"]);
-  const equipamentoIndex = findHeaderIndex_(headers, ["Equipamento/Quantidade", "Equipamento"]);
+  const spreadsheet = getDesligadosSpreadsheet_();
   const now = new Date();
-  const monthKey = Utilities.formatDate(now, Session.getScriptTimeZone(), "MM/yyyy");
+  const currentMonthKey = buildMonthKey_(now);
   const mensalMap = {};
-  const equipamentosMap = {};
+  const equipamentosMensalMap = {};
+  const equipamentosRankingMap = {};
+  const pendencias = [];
+  const recentReturns = [];
+  let totalDesligamentos = 0;
+  let desligamentosMesAtual = 0;
 
-  rows.forEach(function (row) {
-    if (colaboradorIndex >= 0 && !row[colaboradorIndex]) return;
+  spreadsheet.getSheets().forEach(function (sheet) {
+    if (!isDesligadosMonthSheet_(sheet) && sheet.getName() !== DESLIGAMENTOS_SHEET_NAME) return;
+    if (sheet.getLastRow() < 2) return;
 
-    const date = dateIndex >= 0 ? parseDate_(row[dateIndex]) : null;
-    const key = date ? Utilities.formatDate(date, Session.getScriptTimeZone(), "MM/yyyy") : "Sem data";
-    mensalMap[key] = (mensalMap[key] || 0) + 1;
+    const values = sheet.getDataRange().getValues();
+    const headerInfo = detectDesligadosHeader_(values);
+    if (!headerInfo.found) return;
 
-    if (equipamentoIndex >= 0 && row[equipamentoIndex]) {
-      String(row[equipamentoIndex]).split(",").forEach(function (item) {
-        const name = item.replace(/^\s*\d+x\s*/i, "").trim();
-        if (name) equipamentosMap[name] = (equipamentosMap[name] || 0) + 1;
+    const headers = values[headerInfo.rowIndex];
+    const headerIndex = buildNormalizedHeaderIndex_(headers);
+    const colaboradorIndex = findNormalizedHeaderIndex_(headerIndex, ["COLABORADOR", "Colaborador", "Nome"]);
+    const cargoIndex = findNormalizedHeaderIndex_(headerIndex, ["CARGO", "Cargo"]);
+    const desligamentoIndex = findNormalizedHeaderIndex_(headerIndex, ["DESLIGAMENTO", "Data Desligamento", "Data de Desligamento"]);
+    const recebidoIndex = findNormalizedHeaderIndex_(headerIndex, ["RECEBIDO", "Recebimento", "Data Recebido", "Data do Recebimento"]);
+    const filialIndex = findNormalizedHeaderIndex_(headerIndex, ["FILIAL", "Filial"]);
+    const emailIndex = findNormalizedHeaderIndex_(headerIndex, ["E-MAIL", "EMAIL", "E-mail"]);
+    const equipDevolvidoIndex = findNormalizedHeaderIndex_(headerIndex, ["Equip. Devolvido", "Equip Devolvido"]);
+    const equipamentosIndex = findNormalizedHeaderIndex_(headerIndex, [
+      "Equipamento(s) e Quantidade",
+      "Equipamentos e Quantidade",
+      "Equipamento/Quantidade",
+      "Equipamento"
+    ]);
+
+    if (colaboradorIndex < 0) return;
+
+    values.slice(headerInfo.rowIndex + 1).forEach(function (row) {
+      const colaborador = row[colaboradorIndex];
+      if (!colaborador || String(colaborador).trim() === "") return;
+
+      const filial = filialIndex >= 0 ? row[filialIndex] : "";
+      if (!isFilialPermitida_(filial)) return;
+
+      const desligamento = desligamentoIndex >= 0 ? row[desligamentoIndex] : "";
+      const desligamentoDate = parseDate_(desligamento);
+      const monthDate = desligamentoDate || getDateFromSheetName_(sheet.getName()) || now;
+      const monthKey = buildMonthKey_(monthDate);
+
+      mensalMap[monthKey] = (mensalMap[monthKey] || 0) + 1;
+      totalDesligamentos += 1;
+
+      if (monthKey === currentMonthKey) {
+        desligamentosMesAtual += 1;
+      }
+
+      const equipamentoStr = equipamentosIndex >= 0 ? row[equipamentosIndex] : "";
+      const equipamentos = parseEquipments_(equipamentoStr);
+
+      equipamentos.forEach(function (equipamento) {
+        equipamentosMensalMap[monthKey] = (equipamentosMensalMap[monthKey] || 0) + equipamento.qty;
+        equipamentosRankingMap[equipamento.name] = (equipamentosRankingMap[equipamento.name] || 0) + equipamento.qty;
       });
-    }
+
+      const statusDevolucao = equipDevolvidoIndex >= 0
+        ? normalizeText_(row[equipDevolvidoIndex])
+        : "";
+
+      if (statusDevolucao !== "devolvido") {
+        const diffDays = desligamentoDate
+          ? Math.ceil(Math.abs(now.getTime() - desligamentoDate.getTime()) / (1000 * 60 * 60 * 24))
+          : 0;
+
+        pendencias.push({
+          name: String(colaborador),
+          date: desligamentoDate ? Utilities.formatDate(desligamentoDate, Session.getScriptTimeZone(), "dd/MM/yyyy") : "N/A",
+          filial: filial || "N/A",
+          priority: diffDays > 7 ? "ALTA" : "NORMAL"
+        });
+      } else {
+        const recebido = recebidoIndex >= 0 ? row[recebidoIndex] : "";
+        const recebidoDate = parseDate_(recebido) || desligamentoDate;
+
+        if (recebidoDate && !isNaN(recebidoDate.getTime())) {
+          const diffDaysRec = Math.ceil(Math.abs(now.getTime() - recebidoDate.getTime()) / (1000 * 60 * 60 * 24));
+
+          if (diffDaysRec <= 31) {
+            recentReturns.push({
+              name: String(colaborador),
+              date: Utilities.formatDate(recebidoDate, Session.getScriptTimeZone(), "dd/MM/yyyy"),
+              equipments: equipamentoStr ? String(equipamentoStr) : "Não especificado",
+              timestamp: recebidoDate.getTime()
+            });
+          }
+        }
+      }
+    });
   });
 
-  const mensalData = Object.keys(mensalMap).sort().map(function (month) {
+  recentReturns.sort(function (a, b) {
+    return b.timestamp - a.timestamp;
+  });
+
+  const sortedMonthKeys = Object.keys(mensalMap).sort(compareMonthKeys_);
+  const sortedEquipMonthKeys = Object.keys(equipamentosMensalMap).sort(compareMonthKeys_);
+
+  const mensalData = sortedMonthKeys.map(function (month) {
     return { month: month, count: mensalMap[month] };
   });
 
-  const equipamentosRanking = Object.keys(equipamentosMap)
-    .map(function (name) { return { name: name, count: equipamentosMap[name] }; })
-    .sort(function (a, b) { return b.count - a.count; });
+  const equipamentosMensal = sortedEquipMonthKeys.map(function (month) {
+    return { month: month, count: equipamentosMensalMap[month] };
+  });
+
+  const equipamentosRanking = Object.keys(equipamentosRankingMap)
+    .map(function (name) { return { name: name, count: equipamentosRankingMap[name] }; })
+    .sort(function (a, b) { return b.count - a.count; })
+    .slice(0, 10);
 
   return {
-    totalDesligamentos: rows.length,
-    desligamentosMesAtual: mensalMap[monthKey] || 0,
+    totalDesligamentos: totalDesligamentos,
+    desligamentosMesAtual: desligamentosMesAtual,
     mensalData: mensalData,
-    equipamentosMensal: mensalData,
+    equipamentosMensal: equipamentosMensal,
     equipamentosRanking: equipamentosRanking,
-    pendencias: [],
-    recentReturns: [],
+    pendencias: pendencias.reverse().slice(0, 15),
+    recentReturns: recentReturns.slice(0, 50),
     lastUpdate: Utilities.formatDate(now, Session.getScriptTimeZone(), "dd/MM/yyyy HH:mm:ss")
   };
+}
+
+function getDesligadosSpreadsheet_() {
+  const spreadsheetId = SCRIPT_PROPERTIES.getProperty(DESLIGAMENTOS_SPREADSHEET_ID);
+
+  if (spreadsheetId) {
+    return SpreadsheetApp.openById(spreadsheetId);
+  }
+
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  if (!spreadsheet) {
+    throw new Error("Configure a propriedade " + DESLIGAMENTOS_SPREADSHEET_ID + " nas Propriedades do Script.");
+  }
+
+  return spreadsheet;
+}
+
+function detectDesligadosHeader_(values) {
+  const limit = Math.min(values.length, 10);
+
+  for (let i = 0; i < limit; i++) {
+    const headerIndex = buildNormalizedHeaderIndex_(values[i]);
+    const colaboradorIndex = findNormalizedHeaderIndex_(headerIndex, ["COLABORADOR", "Colaborador", "Nome"]);
+
+    if (colaboradorIndex >= 0) {
+      return { found: true, rowIndex: i };
+    }
+  }
+
+  return { found: false, rowIndex: 0 };
+}
+
+function buildNormalizedHeaderIndex_(headers) {
+  const index = {};
+
+  headers.forEach(function (header, i) {
+    const normal = normalizeHeader_(header);
+    if (normal) index[normal] = i;
+  });
+
+  return index;
+}
+
+function findNormalizedHeaderIndex_(headerIndex, names) {
+  for (let i = 0; i < names.length; i++) {
+    const key = normalizeHeader_(names[i]);
+    if (Object.prototype.hasOwnProperty.call(headerIndex, key)) {
+      return headerIndex[key];
+    }
+  }
+
+  return -1;
+}
+
+function normalizeHeader_(value) {
+  return normalizeText_(value)
+    .replace(/[.\-_/()]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeText_(value) {
+  if (value === null || value === undefined) return "";
+
+  return String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function isFilialPermitida_(filial) {
+  return normalizeText_(filial).indexOf("barra funda") !== -1;
+}
+
+function isDesligadosMonthSheet_(sheet) {
+  return getDateFromSheetName_(sheet.getName()) !== null;
+}
+
+function getDateFromSheetName_(sheetName) {
+  const normalized = normalizeText_(sheetName);
+  const months = getMonthNames_();
+  let monthIndex = -1;
+
+  for (let i = 0; i < months.length; i++) {
+    if (normalized.indexOf(normalizeText_(months[i])) !== -1) {
+      monthIndex = i;
+      break;
+    }
+  }
+
+  const yearMatch = normalized.match(/(19\d{2}|20\d{2})/);
+  if (monthIndex === -1 || !yearMatch) return null;
+
+  return new Date(parseInt(yearMatch[1], 10), monthIndex, 1);
+}
+
+function buildMonthKey_(date) {
+  return getMonthNames_()[date.getMonth()] + " " + date.getFullYear();
+}
+
+function compareMonthKeys_(a, b) {
+  const dateA = getDateFromSheetName_(a) || parseMonthKey_(a);
+  const dateB = getDateFromSheetName_(b) || parseMonthKey_(b);
+
+  if (!dateA && !dateB) return a.localeCompare(b);
+  if (!dateA) return 1;
+  if (!dateB) return -1;
+
+  return dateA.getTime() - dateB.getTime();
+}
+
+function parseMonthKey_(key) {
+  const normalized = normalizeText_(key);
+  const months = getMonthNames_();
+  let monthIndex = -1;
+
+  for (let i = 0; i < months.length; i++) {
+    if (normalized.indexOf(normalizeText_(months[i])) !== -1) {
+      monthIndex = i;
+      break;
+    }
+  }
+
+  const yearMatch = normalized.match(/(19\d{2}|20\d{2})/);
+  if (monthIndex === -1 || !yearMatch) return null;
+
+  return new Date(parseInt(yearMatch[1], 10), monthIndex, 1);
+}
+
+function getMonthNames_() {
+  return [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+  ];
+}
+
+function parseEquipments_(equipStr) {
+  const result = [];
+  if (!equipStr) return result;
+
+  const str = String(equipStr);
+  const regex = /(\d+)\s*[xX]?\s*([^0-9,+]+?)(?=\s*\d|\s*[+,]|$)/g;
+  let match;
+  let found = false;
+
+  while ((match = regex.exec(str)) !== null) {
+    const name = normalizeEquipmentName_(match[2]);
+    if (name) {
+      result.push({ qty: parseInt(match[1], 10), name: name });
+      found = true;
+    }
+  }
+
+  if (!found) {
+    str.split(/,|\+/).forEach(function (part) {
+      const name = normalizeEquipmentName_(part);
+      if (name) result.push({ qty: 1, name: name });
+    });
+  }
+
+  return result;
+}
+
+function normalizeEquipmentName_(name) {
+  if (!name) return "";
+
+  const variations = {
+    notebook: "Notebook",
+    notbook: "Notebook",
+    notebock: "Notebook",
+    note: "Notebook",
+    laptop: "Notebook",
+    notes: "Notebook",
+    notebooks: "Notebook",
+    fonte: "Fonte",
+    font: "Fonte",
+    fontes: "Fonte",
+    carregador: "Fonte",
+    carreg: "Fonte",
+    mouse: "Mouse",
+    mouses: "Mouse",
+    monitor: "Monitor",
+    monitores: "Monitor",
+    tela: "Monitor",
+    celular: "Celular",
+    celulares: "Celular",
+    iphone: "Celular",
+    android: "Celular",
+    teclado: "Teclado",
+    teclados: "Teclado",
+    macbook: "Macbook",
+    mac: "Macbook",
+    "mac book": "Macbook",
+    headset: "Headset",
+    fone: "Headset",
+    fones: "Headset",
+    headphone: "Headset",
+    adaptador: "Adaptador",
+    adaptadores: "Adaptador",
+    mochila: "Mochila",
+    mochilas: "Mochila"
+  };
+
+  const clean = String(name).replace(/[\(\)]/g, "").trim();
+  const key = normalizeText_(clean);
+
+  if (variations[key]) return variations[key];
+
+  return clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
 }
 
 function fetchExternal_(url) {
